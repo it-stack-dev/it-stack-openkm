@@ -1,0 +1,56 @@
+# it-stack-openkm.yml — IT-Stack Module Manifest
+# Module 14: OpenKM document management system
+
+module:
+  name: openkm
+  number: "14"
+  repo: it-stack-dev/it-stack-openkm
+  version: "0.1.0"
+  phase: 3
+  category: business
+  server: lab-biz1
+  description: "OpenKM document management system"
+
+upstream:
+  name: OpenKM
+  image: openkm/openkm-ce:latest
+  license: GPL-2.0
+
+ports:
+  - 8080 (HTTP)
+
+labs:
+  - id: "14-01"
+    name: Standalone
+    docker_compose: docker/docker-compose.standalone.yml
+    test_script: tests/labs/test-lab-14-01.sh
+  - id: "14-02"
+    name: External Dependencies
+    docker_compose: docker/docker-compose.lan.yml
+    test_script: tests/labs/test-lab-14-02.sh
+  - id: "14-03"
+    name: Advanced Features
+    docker_compose: docker/docker-compose.advanced.yml
+    test_script: tests/labs/test-lab-14-03.sh
+  - id: "14-04"
+    name: SSO Integration
+    docker_compose: docker/docker-compose.sso.yml
+    test_script: tests/labs/test-lab-14-04.sh
+  - id: "14-05"
+    name: Advanced Integration
+    docker_compose: docker/docker-compose.integration.yml
+    test_script: tests/labs/test-lab-14-05.sh
+  - id: "14-06"
+    name: Production Deployment
+    docker_compose: docker/docker-compose.production.yml
+    test_script: tests/labs/test-lab-14-06.sh
+
+resources:
+  cpu_cores: 2
+  ram_gb: 4
+  disk_gb: 20
+
+health_check:
+  endpoint: /health
+  metrics_endpoint: /metrics
+  log_path: /var/log/openkm/

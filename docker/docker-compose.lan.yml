@@ -1,0 +1,36 @@
+# Lab 02 — External Dependencies: openkm with external PostgreSQL and Redis
+---
+services:
+  openkm:
+    image: openkm/openkm-ce:latest
+    container_name: it-stack-openkm
+    restart: unless-stopped
+    ports:
+      - "8080:$firstPort"
+    environment:
+      - IT_STACK_ENV=lab-02-lan
+      - DB_HOST=
+      - DB_PORT=5432
+      - REDIS_HOST=
+    networks:
+      - it-stack-net
+
+  # Lightweight local DB for lab (replace with lab-db1 in real env)
+  postgres:
+    image: postgres:16
+    container_name: it-stack-openkm-db
+    environment:
+      POSTGRES_DB: openkm_db
+      POSTGRES_USER: openkm_user
+      POSTGRES_PASSWORD: openkm_pass
+    volumes:
+      - openkm_pg_data:/var/lib/postgresql/data
+    networks:
+      - it-stack-net
+
+networks:
+  it-stack-net:
+    driver: bridge
+
+volumes:
+  openkm_pg_data:
