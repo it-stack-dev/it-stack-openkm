@@ -124,3 +124,33 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker compose -f docker/docker-compose.lan.yml down -v
+
+  lab-03-smoke:
+    name: Lab 03 -- OpenKM Advanced Features (Elasticsearch full-text search)
+    runs-on: ubuntu-latest
+    needs: validate
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: sudo apt-get install -y curl default-mysql-client
+      - name: Validate advanced compose
+        run: docker compose -f docker/docker-compose.advanced.yml config -q && echo "Advanced compose valid"
+      - name: Start advanced stack
+        run: docker compose -f docker/docker-compose.advanced.yml up -d
+      - name: Wait for MySQL
+        run: timeout 120 bash -c 'until docker exec openkm-a03-db mysqladmin ping -uroot -pRootLab03! --silent; do sleep 5; done'
+      - name: Wait for Elasticsearch
+        run: timeout 120 bash -c 'until curl -sf http://localhost:9201/_cluster/health | grep -q green; do sleep 5; done'
+      - name: Wait for Mailhog
+        run: timeout 60 bash -c 'until curl -sf http://localhost:8632/api/v2/messages; do sleep 5; done'
+      - name: Wait for OpenKM
+        run: timeout 300 bash -c 'until curl -sf http://localhost:8332/openkm/; do sleep 10; done'
+      - name: Run Lab 14-03 test script
+        run: bash tests/labs/test-lab-14-03.sh --no-cleanup
+      - name: Collect logs on failure
+        if: failure()
+        run: docker compose -f docker/docker-compose.advanced.yml logs
+      - name: Cleanup
+        if: always()
+        run: docker compose -f docker/docker-compose.advanced.yml down -v

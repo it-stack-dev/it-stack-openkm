@@ -1,34 +1,128 @@
-# Lab 03 — Advanced Features: openkm with TLS, resource limits, logging
----
+# Lab 03 — Advanced Features
+# Module 14: OpenKM Document Management
+# External MySQL + Elasticsearch (full-text search) + Mailhog + resource limits
+# Web UI:       http://localhost:8332/openkm
+# Mailhog:      http://localhost:8632
+# Elasticsearch: http://localhost:9201
+
+name: it-stack-openkm-lab03
+
 services:
-  openkm:
-    image: openkm/openkm-ce:latest
-    container_name: it-stack-openkm
+  # ── External Database ─────────────────────────────────────────────────────────
+  openkm-a03-db:
+    image: mysql:8.0
+    container_name: openkm-a03-db
     restart: unless-stopped
-    ports:
-      - "8080:$firstPort"
     environment:
-      - IT_STACK_ENV=lab-03-advanced
-      - TLS_ENABLED=true
+      MYSQL_ROOT_PASSWORD: RootLab03!
+      MYSQL_DATABASE: openkm
+      MYSQL_USER: openkm
+      MYSQL_PASSWORD: OpenKMLab03!
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --default-authentication-plugin=mysql_native_password
     volumes:
-      - openkm_data:/var/lib/openkm
-      - ./certs:/etc/ssl/certs:ro
+      - openkm-a03-db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-pRootLab03!", "--silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     deploy:
       resources:
         limits:
-          cpus: "2.0"
-          memory: G
-    logging:
-      driver: json-file
-      options:
-        max-size: "100m"
-        max-file: "5"
+          cpus: "0.5"
+          memory: 512M
     networks:
-      - it-stack-net
+      - openkm-a03-net
+
+  # ── Elasticsearch (full-text document indexing) ───────────────────────────────
+  openkm-a03-es:
+    image: elasticsearch:8.13.2
+    container_name: openkm-a03-es
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    volumes:
+      - openkm-a03-es-data:/usr/share/elasticsearch/data
+    ports:
+      - "9201:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -q '\\\"status\\\":\\\"green\\\"\\|\\\"status\\\":\\\"yellow\\\"'"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 1G
+    networks:
+      - openkm-a03-net
+
+  # ── SMTP Relay ────────────────────────────────────────────────────────────────
+  openkm-a03-mail:
+    image: mailhog/mailhog:latest
+    container_name: openkm-a03-mail
+    restart: unless-stopped
+    ports:
+      - "8632:8025"
+    networks:
+      - openkm-a03-net
+
+  # ── OpenKM Application ────────────────────────────────────────────────────────
+  openkm-a03-app:
+    image: openkm/openkmdce:7.2.0
+    container_name: openkm-a03-app
+    restart: unless-stopped
+    depends_on:
+      openkm-a03-db:
+        condition: service_healthy
+      openkm-a03-es:
+        condition: service_healthy
+      openkm-a03-mail:
+        condition: service_started
+    ports:
+      - "8332:8080"
+    environment:
+      OPENKM_DB_HOST: openkm-a03-db
+      OPENKM_DB_PORT: "3306"
+      OPENKM_DB_NAME: openkm
+      OPENKM_DB_USER: openkm
+      OPENKM_DB_PASS: OpenKMLab03!
+      OPENKM_SMTP_HOST: openkm-a03-mail
+      OPENKM_SMTP_PORT: "1025"
+      OPENKM_ES_HOST: openkm-a03-es
+      OPENKM_ES_PORT: "9200"
+      JAVA_OPTS: "-Xms512m -Xmx1g -XX:+UseG1GC"
+    volumes:
+      - openkm-a03-data:/opt/tomcat/repository
+      - openkm-a03-logs:/opt/tomcat/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/openkm/"]
+      interval: 30s
+      timeout: 15s
+      retries: 10
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1536M
+    networks:
+      - openkm-a03-net
 
 networks:
-  it-stack-net:
+  openkm-a03-net:
     driver: bridge
 
 volumes:
-  openkm_data:
+  openkm-a03-db-data:
+  openkm-a03-es-data:
+  openkm-a03-data:
+  openkm-a03-logs:
