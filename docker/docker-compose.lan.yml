@@ -1,36 +1,85 @@
-# Lab 02 — External Dependencies: openkm with external PostgreSQL and Redis
----
+# Lab 02 — External Dependencies
+# Module 14: OpenKM Document Management
+# External MySQL + Mailhog SMTP relay
+# Web UI:  http://localhost:8313/openkm
+# Mailhog: http://localhost:8613
+
+name: it-stack-openkm-lab02
+
 services:
-  openkm:
-    image: openkm/openkm-ce:latest
-    container_name: it-stack-openkm
+  # ── External Database (simulates lab-db1) ────────────────────────────────────
+  openkm-l02-db:
+    image: mysql:8.0
+    container_name: openkm-l02-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: RootLab02!
+      MYSQL_DATABASE: openkm
+      MYSQL_USER: openkm
+      MYSQL_PASSWORD: OpenKMLab02!
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --default-authentication-plugin=mysql_native_password
+    volumes:
+      - openkm-l02-db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-pRootLab02!", "--silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - openkm-l02-net
+
+  # ── External SMTP Relay ───────────────────────────────────────────────────────
+  openkm-l02-mail:
+    image: mailhog/mailhog:latest
+    container_name: openkm-l02-mail
     restart: unless-stopped
     ports:
-      - "8080:$firstPort"
-    environment:
-      - IT_STACK_ENV=lab-02-lan
-      - DB_HOST=
-      - DB_PORT=5432
-      - REDIS_HOST=
+      - "8613:8025"
     networks:
-      - it-stack-net
+      - openkm-l02-net
 
-  # Lightweight local DB for lab (replace with lab-db1 in real env)
-  postgres:
-    image: postgres:16
-    container_name: it-stack-openkm-db
+  # ── OpenKM Application ────────────────────────────────────────────────────────
+  openkm-l02-app:
+    image: openkm/openkmdce:7.2.0
+    container_name: openkm-l02-app
+    restart: unless-stopped
+    depends_on:
+      openkm-l02-db:
+        condition: service_healthy
+      openkm-l02-mail:
+        condition: service_started
+    ports:
+      - "8313:8080"
     environment:
-      POSTGRES_DB: openkm_db
-      POSTGRES_USER: openkm_user
-      POSTGRES_PASSWORD: openkm_pass
+      OPENKM_DB_HOST: openkm-l02-db
+      OPENKM_DB_PORT: "3306"
+      OPENKM_DB_NAME: openkm
+      OPENKM_DB_USER: openkm
+      OPENKM_DB_PASS: OpenKMLab02!
+      OPENKM_SMTP_HOST: openkm-l02-mail
+      OPENKM_SMTP_PORT: "1025"
+      JAVA_OPTS: "-Xms256m -Xmx768m -XX:+UseG1GC"
     volumes:
-      - openkm_pg_data:/var/lib/postgresql/data
+      - openkm-l02-data:/opt/tomcat/repository
+      - openkm-l02-logs:/opt/tomcat/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/openkm/"]
+      interval: 30s
+      timeout: 15s
+      retries: 10
+      start_period: 120s
     networks:
-      - it-stack-net
+      - openkm-l02-net
 
 networks:
-  it-stack-net:
+  openkm-l02-net:
     driver: bridge
 
 volumes:
-  openkm_pg_data:
+  openkm-l02-db-data:
+  openkm-l02-data:
+  openkm-l02-logs:
