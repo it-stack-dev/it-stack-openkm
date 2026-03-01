@@ -1,26 +1,238 @@
-# Lab 05 — Advanced Integration: openkm with full IT-Stack ecosystem
----
+# =============================================================================
+# IT-Stack: OpenKM — Lab 05: Advanced Integration
+# Module 14 · Phase 3 · Lab 05
+# =============================================================================
+# Services: MySQL · OpenLDAP · Elasticsearch · Keycloak · WireMock (consumers) · Mailhog · OpenKM
+# Ports:    OpenKM:8373  ES:9203  WireMock:8374  Keycloak:8471  LDAP:3897  MH:8673
+# Credentials:
+#   DB root:   RootLab05!
+#   OpenKM DB: openkm / OpenKMLab05!
+#   OpenKM UI: okmAdmin / OkmAdmin05!
+#   Keycloak:  admin / Admin05!
+#   LDAP:      cn=admin,dc=lab,dc=local / LdapLab05!
+# What's new vs Lab 04:
+#   + WireMock simulates external document consumers (SuiteCRM, Odoo)
+#   + External consumers can retrieve documents via OpenKM REST API
+#   + OpenKM integration env vars: CONSUMER_SUITECRM_URL, CONSUMER_ODOO_URL
+#   + ES retained for full-text indexing (port 9203)
+# Integration tested: OpenKM ↔ SuiteCRM (document attach), OpenKM ↔ Odoo (DMS)
+# =============================================================================
+
+name: it-stack-openkm-lab05
+
 services:
-  openkm:
-    image: openkm/openkm-ce:latest
-    container_name: it-stack-openkm
+
+  # ── MySQL ────────────────────────────────────────────────────────────────
+  openkm-i05-db:
+    image: mysql:8.0
+    container_name: openkm-i05-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: RootLab05!
+      MYSQL_DATABASE: openkm
+      MYSQL_USER: openkm
+      MYSQL_PASSWORD: OpenKMLab05!
+    volumes:
+      - openkm-i05-db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-pRootLab05!", "--silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks:
+      - openkm-i05-net
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+
+  # ── OpenLDAP ─────────────────────────────────────────────────────────────
+  openkm-i05-ldap:
+    image: osixia/openldap:1.5.0
+    container_name: openkm-i05-ldap
+    restart: unless-stopped
+    environment:
+      LDAP_ORGANISATION: "IT-Stack Lab"
+      LDAP_DOMAIN: lab.local
+      LDAP_ADMIN_PASSWORD: LdapLab05!
+      LDAP_CONFIG_PASSWORD: ConfigLab05!
+      LDAP_BASE_DN: dc=lab,dc=local
+      LDAP_READONLY_USER: "true"
+      LDAP_READONLY_USER_USERNAME: readonly
+      LDAP_READONLY_USER_PASSWORD: ReadOnly05!
+    ports:
+      - "3897:389"
+    volumes:
+      - openkm-i05-ldap-data:/var/lib/ldap
+      - openkm-i05-ldap-config:/etc/ldap/slapd.d
+    healthcheck:
+      test: ["CMD-SHELL", "ldapsearch -x -H ldap://localhost -b dc=lab,dc=local -D cn=admin,dc=lab,dc=local -w LdapLab05! cn=admin > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks:
+      - openkm-i05-net
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
+
+  # ── Elasticsearch ────────────────────────────────────────────────────────
+  openkm-i05-es:
+    image: elasticsearch:8.13.2
+    container_name: openkm-i05-es
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9203:9200"
+    volumes:
+      - openkm-i05-es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+    networks:
+      - openkm-i05-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "0.5"
+
+  # ── Keycloak ─────────────────────────────────────────────────────────────
+  openkm-i05-kc:
+    image: quay.io/keycloak/keycloak:24.0.3
+    container_name: openkm-i05-kc
+    restart: unless-stopped
+    command: start-dev
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: Admin05!
+      KC_HEALTH_ENABLED: "true"
+      KC_DB: dev-file
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_ENABLED: "true"
+    ports:
+      - "8471:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/realms/master || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    networks:
+      - openkm-i05-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+
+  # ── WireMock — SuiteCRM + Odoo document consumer mock ──────────────────
+  openkm-i05-mock:
+    image: wiremock/wiremock:3.3.1
+    container_name: openkm-i05-mock
+    restart: unless-stopped
+    command: >
+      --port=8080
+      --verbose
+      --global-response-templating
+    ports:
+      - "8374:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/__admin/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - openkm-i05-net
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
+
+  # ── Mailhog ──────────────────────────────────────────────────────────────
+  openkm-i05-mail:
+    image: mailhog/mailhog:latest
+    container_name: openkm-i05-mail
     restart: unless-stopped
     ports:
-      - "8080:$firstPort"
-    environment:
-      - IT_STACK_ENV=lab-05-integration
-      - KEYCLOAK_URL=
-      - DB_HOST=
-      - REDIS_HOST=
-      - SMTP_HOST=
-      - GRAYLOG_HOST=
-    extra_hosts:
-      - "lab-id1:10.0.50.11"
-      - "lab-db1:10.0.50.12"
-      - "lab-proxy1:10.0.50.15"
+      - "8673:8025"
     networks:
-      - it-stack-net
+      - openkm-i05-net
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.1"
 
+  # ── OpenKM ───────────────────────────────────────────────────────────────
+  openkm-i05-app:
+    image: openkm/openkmdce:7.2.0
+    container_name: openkm-i05-app
+    restart: unless-stopped
+    depends_on:
+      openkm-i05-db:
+        condition: service_healthy
+      openkm-i05-ldap:
+        condition: service_healthy
+      openkm-i05-es:
+        condition: service_healthy
+      openkm-i05-mock:
+        condition: service_healthy
+    ports:
+      - "8373:8080"
+    environment:
+      OPENKM_DB_DRIVER: com.mysql.cj.jdbc.Driver
+      OPENKM_DB_URL: jdbc:mysql://openkm-i05-db:3306/openkm?useSSL=false&serverTimezone=UTC
+      OPENKM_DB_USER: openkm
+      OPENKM_DB_PASS: OpenKMLab05!
+      OPENKM_ES_HOST: openkm-i05-es
+      OPENKM_ES_PORT: "9200"
+      OPENKM_ADMIN_USER: okmAdmin
+      OPENKM_ADMIN_PASS: OkmAdmin05!
+      # Integration consumer references (external systems that consume OpenKM docs)
+      CONSUMER_SUITECRM_URL: http://openkm-i05-mock:8080
+      CONSUMER_ODOO_URL: http://openkm-i05-mock:8080
+      JAVA_OPTS: >-
+        -Xms512m -Xmx1g -XX:+UseG1GC
+        -Dopenkm.property.security.ldap.enable=true
+        -Dopenkm.property.security.ldap.server=ldap://openkm-i05-ldap:389
+        -Dopenkm.property.security.ldap.security.principal=cn=admin,dc=lab,dc=local
+        -Dopenkm.property.security.ldap.security.credentials=LdapLab05!
+        -Dopenkm.property.security.ldap.users.dn=ou=users,dc=lab,dc=local
+        -Dopenkm.property.security.ldap.groups.dn=ou=groups,dc=lab,dc=local
+    volumes:
+      - openkm-i05-data:/opt/openkm/repository
+      - openkm-i05-logs:/opt/openkm/log
+    networks:
+      - openkm-i05-net
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+          cpus: "1.0"
+
+# ── Networks ─────────────────────────────────────────────────────────────────
 networks:
-  it-stack-net:
+  openkm-i05-net:
+    name: openkm-i05-net
     driver: bridge
+
+# ── Volumes ──────────────────────────────────────────────────────────────────
+volumes:
+  openkm-i05-db-data:
+  openkm-i05-ldap-data:
+  openkm-i05-ldap-config:
+  openkm-i05-es-data:
+  openkm-i05-data:
+  openkm-i05-logs:
