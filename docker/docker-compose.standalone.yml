@@ -1,29 +1,61 @@
-# Lab 01 — Standalone: Complete OpenKM document management system in isolation
-# No external dependencies required.
+# Lab 01 — Standalone: OpenKM Document Management System in complete isolation
+# Module 14 | No external dependencies required
 ---
 services:
-  openkm:
-    image: openkm/openkm-ce:latest
-    container_name: it-stack-openkm
+  openkm-s01-db:
+    image: mysql:8.0
+    container_name: openkm-s01-db
     restart: unless-stopped
-    ports:
-      - "8080:$firstPort"
     environment:
-      - IT_STACK_ENV=lab-01-standalone
+      MYSQL_ROOT_PASSWORD: RootLab01!
+      MYSQL_DATABASE: openkm
+      MYSQL_USER: openkm
+      MYSQL_PASSWORD: OpenKMLab01!
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-authentication-plugin=mysql_native_password
     volumes:
-      - openkm_data:/var/lib/openkm
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
+      - openkm-s01-db-data:/var/lib/mysql
     networks:
-      - it-stack-net
+      - openkm-s01-net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pRootLab01!"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
-networks:
-  it-stack-net:
-    driver: bridge
+  openkm-s01-app:
+    image: openkm/openkmdce:7.2.0
+    container_name: openkm-s01-app
+    restart: unless-stopped
+    depends_on:
+      openkm-s01-db:
+        condition: service_healthy
+    environment:
+      OPENKM_DB_HOST: openkm-s01-db
+      OPENKM_DB_PORT: "3306"
+      OPENKM_DB_NAME: openkm
+      OPENKM_DB_USER: openkm
+      OPENKM_DB_PASS: OpenKMLab01!
+      JAVA_OPTS: "-Xms256m -Xmx768m -XX:+UseG1GC"
+    ports:
+      - "8304:8080"
+    volumes:
+      - openkm-s01-data:/opt/tomcat/repository
+      - openkm-s01-logs:/opt/tomcat/logs
+    networks:
+      - openkm-s01-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/openkm/ | grep -qi 'openkm\\|login\\|username\\|document' || exit 1"]
+      interval: 30s
+      timeout: 15s
+      retries: 12
+      start_period: 120s
 
 volumes:
-  openkm_data:
+  openkm-s01-db-data:
+  openkm-s01-data:
+  openkm-s01-logs:
+
+networks:
+  openkm-s01-net:
+    driver: bridge
