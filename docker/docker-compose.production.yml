@@ -1,53 +1,192 @@
-# Lab 06 — Production: openkm HA-ready with monitoring and external volumes
+# Lab 06 — Production Deployment: OpenKM
+# Full production-grade stack: MySQL · OpenLDAP · Elasticsearch · Keycloak · Mailhog · OpenKM
+# Ports: Web:8393  ES:9204  KC:8491  LDAP:3901  MH:8693
+# Naming: openkm-p06-{service}  (p06 = production lab 06)
 ---
+name: it-stack-openkm-lab06
+
 services:
-  openkm:
-    image: openkm/openkm-ce:latest
-    container_name: it-stack-openkm
-    restart: always
-    ports:
-      - "8080:$firstPort"
+
+  openkm-p06-db:
+    image: mysql:8.0
+    container_name: openkm-p06-db
+    restart: unless-stopped
     environment:
-      - IT_STACK_ENV=production
-      - KEYCLOAK_URL=
-      - DB_HOST=
-      - REDIS_HOST=
-      - GRAYLOG_HOST=
+      MYSQL_ROOT_PASSWORD: RootProd06!
+      MYSQL_DATABASE: openkm
+      MYSQL_USER: openkm
+      MYSQL_PASSWORD: OpenKMProd06!
     volumes:
-      - openkm_data:/var/lib/openkm
-      - /etc/ssl/certs:/etc/ssl/certs:ro
-    deploy:
-      replicas: 1
-      resources:
-        limits:
-          cpus: "4.0"
-          memory: G
-        reservations:
-          cpus: "1.0"
-          memory: 1G
-      restart_policy:
-        condition: any
-        delay: 5s
-    logging:
-      driver: gelf
-      options:
-        gelf-address: "udp://${GRAYLOG_HOST}:12201"
-        tag: "it-stack-openkm"
+      - db-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost/health || exit 1"]
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-pRootProd06!", "--silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 512M}
+        reservations: {cpus: "0.25", memory: 128M}
+    networks: [lab06]
+
+  openkm-p06-ldap:
+    image: osixia/openldap:1.5.0
+    container_name: openkm-p06-ldap
+    restart: unless-stopped
+    environment:
+      LDAP_ORGANISATION: IT-Stack Lab
+      LDAP_DOMAIN: lab.local
+      LDAP_ADMIN_PASSWORD: LdapProd06!
+    ports:
+      - "3901:389"
+    volumes:
+      - ldap-data:/var/lib/ldap
+      - ldap-config:/etc/ldap/slapd.d
+    healthcheck:
+      test: ["CMD-SHELL", "ldapsearch -x -H ldap://localhost -b dc=lab,dc=local -D cn=admin,dc=lab,dc=local -w LdapProd06! cn=admin && echo ok"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 256M}
+    networks: [lab06]
+
+  openkm-p06-es:
+    image: elasticsearch:8.13.2
+    container_name: openkm-p06-es
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9204:9200"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 768M}
+        reservations: {cpus: "0.25", memory: 512M}
+    networks: [lab06]
+
+  openkm-p06-kc:
+    image: quay.io/keycloak/keycloak:24.0.3
+    container_name: openkm-p06-kc
+    command: start-dev
+    restart: unless-stopped
+    environment:
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: Admin06!
+    ports:
+      - "8491:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/realms/master || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 768M}
+        reservations: {cpus: "0.25", memory: 256M}
+    networks: [lab06]
+
+  openkm-p06-mail:
+    image: mailhog/mailhog:latest
+    container_name: openkm-p06-mail
+    restart: unless-stopped
+    ports:
+      - "8693:8025"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8025/api/v2/messages || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 128M}
+    networks: [lab06]
+
+  openkm-p06-app:
+    image: openkm/openkmdce:7.2.0
+    container_name: openkm-p06-app
+    restart: unless-stopped
+    depends_on:
+      openkm-p06-db:
+        condition: service_healthy
+      openkm-p06-ldap:
+        condition: service_healthy
+      openkm-p06-es:
+        condition: service_healthy
+      openkm-p06-kc:
+        condition: service_healthy
+      openkm-p06-mail:
+        condition: service_started
+    ports:
+      - "8393:8080"
+    environment:
+      IT_STACK_ENV: production
+      IT_STACK_MODULE: openkm
+      IT_STACK_LAB: "06"
+      JAVA_OPTS: >
+        -Xms512m -Xmx1536m
+        -Dhibernate.connection.url=jdbc:mysql://openkm-p06-db:3306/openkm?useUnicode=true&characterEncoding=UTF-8
+        -Dhibernate.connection.username=openkm
+        -Dhibernate.connection.password=OpenKMProd06!
+        -Dmailer.host=openkm-p06-mail
+        -Dmailer.port=1025
+        -Dldap.host=openkm-p06-ldap
+        -Dldap.port=389
+        -Dldap.base=dc=lab,dc=local
+        -Dldap.adminDn=cn=admin,dc=lab,dc=local
+        -Dldap.adminPassword=LdapProd06!
+        -Des.host=openkm-p06-es
+        -Des.port=9200
+      KEYCLOAK_URL: http://openkm-p06-kc:8080
+      KEYCLOAK_REALM: it-stack
+      KEYCLOAK_CLIENT_ID: openkm
+      KEYCLOAK_CLIENT_SECRET: openkm-prod-secret-06
+      CONSUMER_SUITECRM_URL: ""
+      CONSUMER_ODOO_URL: ""
+    volumes:
+      - data:/opt/tomcat/repository
+      - logs:/opt/tomcat/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/OpenKM/ || exit 1"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 120s
-    networks:
-      - it-stack-net
+      retries: 5
+      start_period: 180s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    networks: [lab06]
 
 networks:
-  it-stack-net:
-    external: true
-    name: it-stack-production
+  lab06:
+    driver: bridge
+    name: it-stack-openkm-lab06
 
 volumes:
-  openkm_data:
-    external: true
-    name: it-stack-openkm-data
+  db-data:
+  ldap-data:
+  ldap-config:
+  es-data:
+  data:
+  logs:
