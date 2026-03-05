@@ -45,7 +45,7 @@ services:
     networks:
       - openkm-s01-net
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/openkm/ | grep -qi 'openkm\|login\|username\|document' || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/openkm/ | grep -qi 'openkm|login|username|document' || exit 1"]
       interval: 30s
       timeout: 15s
       retries: 12
